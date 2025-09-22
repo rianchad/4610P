@@ -1,5 +1,32 @@
 #include "main.h"
 #include "lemlib/api.hpp" // IWYU pragma: keep
+#include "liblvgl/llemu.hpp" // IWYU pragma: keep
+#include "liblvgl/lv_init.h"
+#include "pros/apix.h" // IWYU pragma: keep
+#include <string>
+
+
+// =========== VARIABLES ============ //
+int autonNumber = 0;
+int maxAuton = 10;
+bool autonSelected = false;
+const char* autonNames[10] = {
+    "Red Right",
+    "Red Left",
+    "Blue Right",
+    "Blue Left",
+    "Skills",
+    "Test 1",
+    "Test 2",
+    "Test 3",
+    "Test 4",
+    "Unused"
+};
+
+// =========== END VARIABLES ============ //
+
+
+// =========== DEVICES ============= //
 pros::MotorGroup left_motors({-2, 5, -19}, pros::MotorGearset::blue); // left motors use 600 RPM cartridges
 pros::MotorGroup right_motors({9,-10, 12 }, pros::MotorGearset::blue); // right motors use 200 RPM cartridges
 pros::Imu imu(4);
@@ -17,16 +44,14 @@ lemlib::OdomSensors sensors(&vertical_tracking_wheel, // vertical tracking wheel
                      nullptr, // horizontal tracking wheel 2, set to nullptr as we don't have a second one
                      &imu // inertial sensor
 );
+// =========== END DEVICES ============= //
 
-// drivetrain settings
-lemlib::Drivetrain drivetrain(&left_motors, // left motor group
-                              &right_motors, // right motor group
-                              11, // 10 inch track width
-                              lemlib::Omniwheel::NEW_325, // using new 4" omnis
-                              450, // drivetrain rpm is 360
-                              2 // horizontal drift is 2 (for now)
-);
-// lateral PID controller
+
+
+// ========== LEMLIB SETTINGS ============ //
+
+lemlib::Drivetrain drivetrain(&left_motors, &right_motors, 11, lemlib::Omniwheel::NEW_325, 450, 2);
+
 lemlib::ControllerSettings lateral_controller(5, // proportional gain (kP)
                                               0, // integral gain (kI)
                                               9, // derivative gain (kD)
@@ -37,7 +62,7 @@ lemlib::ControllerSettings lateral_controller(5, // proportional gain (kP)
                                               500, // large error range timeout, in milliseconds
                                               20 // maximum acceleration (slew)
 );
-// angular PID controller
+
 lemlib::ControllerSettings angular_controller(5, // proportional gain (kP)
                                               0, // integral gain (kI)
                                               40, // derivative gain (kD)
@@ -48,41 +73,83 @@ lemlib::ControllerSettings angular_controller(5, // proportional gain (kP)
                                               500, // large error range timeout, in milliseconds
                                               20 // maximum acceleration (slew)
 );
+
 lemlib::Chassis chassis(drivetrain, // drivetrain settings
                         lateral_controller, // lateral PID settings
                         angular_controller, // angular PID settings
                         sensors // odometry sensors
 );
 
-void on_center_button() {
-	static bool pressed = false;
-	pressed = !pressed;
-	if (pressed) {
-		pros::lcd::set_text(2, "I was pressed!");
-	} else {
-		pros::lcd::clear_line(2);
-	}
-}
+// ========== END LEMLIB SETTINGS ============ //
 
-/**
- * Runs initialization code. This occurs as soon as the program is started.
- *
- * All other competition modes are blocked by initialize; it is recommended
- * to keep execution time for this mode under a few seconds.
- */
+
+
+
+// ========== FUNCTIONS ============ //
 void initialize() {
-	pros::lcd::initialize();
+    lv_init();
+    pros::lcd::initialize();
     chassis.calibrate();
 
 }
 
+void on_left_button() {
+    if (!autonSelected) {
+        autonNumber--;
+        if (autonNumber < 0) {
+            autonNumber = maxAuton - 1;
+        }
+    }
+}
+void on_right_button() {
+    if (!autonSelected) {
+        autonNumber++;
+        if (autonNumber >= maxAuton) {
+            autonNumber = 0;
+        }
+    }
+}
+void on_center_button() {
+    autonSelected = !autonSelected;
+}
+
+
+void updateAutonDisplay() {
+    int idx = autonNumber;
+    if (idx < 0) idx = 0;
+    if (idx >= maxAuton) idx = maxAuton - 1;
+    std::string line0 = "Auton " + std::to_string(idx) + ": " + autonNames[idx];
+    std::string line1 = autonSelected ? "*** SELECTED ***" : "< choose / lock >";
+    pros::lcd::set_text(0, line0);
+    pros::lcd::set_text(1, line1);
+}
+
+void autonDisplayTask(void*) {
+    while (true) {
+        updateAutonDisplay();
+        pros::delay(200);
+    }
+}
+
+void startAutonDisplay() {
+    pros::lcd::initialize();
+    pros::lcd::register_btn0_cb(on_left_button);
+    pros::lcd::register_btn1_cb(on_center_button);
+    pros::lcd::register_btn2_cb(on_right_button);
+    static pros::Task t(autonDisplayTask, (void*)"auton_disp");
+}
+void disabled() {
 /**
  * Runs while the robot is in the disabled state of Field Management System or
  * the VEX Competition Switch, following either autonomous or opcontrol. When
  * the robot is enabled, this task will exit.
  */
-void disabled() {}
 
+}
+
+
+
+void competition_initialize() {
 /**
  * Runs after initialize(), and before autonomous when connected to the Field
  * Management System or the VEX Competition Switch. This is intended for
@@ -92,19 +159,13 @@ void disabled() {}
  * This task will exit when the robot is enabled and autonomous or opcontrol
  * starts.
  */
-void competition_initialize() {}
+    
+startAutonDisplay();
 
-/**
- * Runs the user autonomous code. This function will be started in its own task
- * with the default priority and stack size whenever the robot is enabled via
- * the Field Management System or the VEX Competition Switch in the autonomous
- * mode. Alternatively, this function may be called in initialize or opcontrol
- * for non-competition testing purposes.
- *
- * If the robot is disabled or communications is lost, the autonomous task
- * will be stopped. Re-enabling the robot will restart the task, not re-start it
- * from where it left off.
- */
+
+}
+
+
 void redRight() {
 	// 4 low, 3 high
     chassis.setPose(-48.5, -15, 90);
@@ -151,34 +212,25 @@ void redRight() {
 	stopper.set_value(0);
 	pros::delay(500);
 	chassis.moveToPoint(-26, -48, 1000, {false, 127, 127}); // re-rams to push blocks further
-    /*
-	If have time, go back to match loader and unload blue blocks and spit them out front
-	chassis.moveToPoint(-56.25, -47, 60);
-	intake.move(127);
-	decider.move(127);
-    top.move(127);
-	stopper.set_value(1);
-    */
     }
     
 
 
 void autonomous() {
-redRight();
+    switch (autonNumber) {
+        case 0:
+            redRight();
+        case 1:
+            // redLeft();
+        case 2:
+            // blueRight();
+        case 3:
+            // blueLeft();
+        
+      
+    }
 }
-/**
- * Runs the operator control code. This function will be started in its own task
- * with the default priority and stack size whenever the robot is enabled via
- * the Field Management System or the VEX Competition Switch in the operator
- * control mode.
- *
- * If no competition control is connected, this function will run immediately
- * following initialize().
- *
- * If the robot is disabled or communications is lost, the
- * operator control task will be stopped. Re-enabling the robot will restart the
- * task, not resume it from where it left off.
- */
+
 void opcontrol() {
   while (true) {
         // get left y and right x positions
@@ -207,7 +259,6 @@ void opcontrol() {
           top.move(0);
           decider.move(0);
         }
-
         if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN)){
             tongue.set_value(1);
         } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP)){
